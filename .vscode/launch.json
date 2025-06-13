@@ -1,0 +1,12 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Hula Game",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/hula_version2.py",
+            "args": ["human", "AI"]
+        }
+    ]
+}
