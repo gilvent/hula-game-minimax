@@ -260,6 +260,8 @@ class Node:
         color_to_move=None,
         game_ai_color=None,
         hexagon_board=None,
+        last_move=None,
+        depth=1,
     ):
         self.t_value = value  # Terminal value for leaf nodes
         self.children = []
@@ -270,6 +272,8 @@ class Node:
         self.color_to_move = color_to_move
         self.game_ai_color = game_ai_color
         self.hexagon_board = hexagon_board
+        self.last_move = last_move  # Operator to get to this state
+        self.depth = depth
 
     def add_child(self, child):
         """Add a child node"""
@@ -286,8 +290,8 @@ class Node:
         return False
 
     def __log_end_game_state(self, message):
-        return
         print("[Minimax Terminal Node]", message)
+        return
 
     def __decide_winner(self):
         black_form_a_loop, black_best_loop, black_num_neutral_stones, black_loop_len = (
@@ -306,7 +310,7 @@ class Node:
             )
             if black_loop_len < white_loop_len:
                 self.__log_end_game_state("black win with shorter loop")
-                self.t_value = self.__utility(
+                self.t_value = self.__evaluate_terminal_node(
                     end_game_state=EndGameStates.SHORTER_LOOP,
                     is_win=self.game_ai_color == "black",
                 )
@@ -314,7 +318,7 @@ class Node:
                 return True
             elif black_loop_len > white_loop_len:
                 self.__log_end_game_state("white win with shorter loop")
-                self.t_value = self.__utility(
+                self.t_value = self.__evaluate_terminal_node(
                     end_game_state=EndGameStates.SHORTER_LOOP,
                     is_win=self.game_ai_color == "white",
                 )
@@ -325,7 +329,7 @@ class Node:
                     self.__log_end_game_state(
                         "equal loop, black win with less neutral stones"
                     )
-                    self.t_value = self.__utility(
+                    self.t_value = self.__evaluate_terminal_node(
                         end_game_state=EndGameStates.EQUAL_LOOP_LESS_NEUTRAL,
                         is_win=self.game_ai_color == "black",
                     )
@@ -335,7 +339,7 @@ class Node:
                     self.__log_end_game_state(
                         "equal loop, white win with less neutral stones"
                     )
-                    self.t_value = self.__utility(
+                    self.t_value = self.__evaluate_terminal_node(
                         end_game_state=EndGameStates.EQUAL_LOOP_LESS_NEUTRAL,
                         is_win=self.game_ai_color == "white",
                     )
@@ -345,7 +349,7 @@ class Node:
                     self.__log_end_game_state(
                         "equal loop, equal neutral stones, white win"
                     )
-                    self.t_value = self.__utility(
+                    self.t_value = self.__evaluate_terminal_node(
                         end_game_state=EndGameStates.EQUAL_LOOP_EQUAL_NEUTRAL,
                         is_win=self.game_ai_color == "white",
                     )
@@ -357,10 +361,10 @@ class Node:
             self.__log_end_game_state(
                 f"Black player - Neutral stones selected: {black_num_neutral_stones}, Loop length: {black_loop_len}"
             )
-            self.t_value = self.__utility(
+            self.t_value = self.__evaluate_terminal_node(
                 end_game_state=EndGameStates.FIRST_FORMING_LOOP,
                 is_win=self.game_ai_color == "black",
-                reward_params={"move_counter": self.move_counter},
+                reward_params={"move_counter": self.depth},
             )
 
             self.game_over = True
@@ -371,10 +375,10 @@ class Node:
             self.__log_end_game_state(
                 f"White player - Neutral stones selected: {white_num_neutral_stones}, Loop length: {white_loop_len}"
             )
-            self.t_value = self.__utility(
+            self.t_value = self.__evaluate_terminal_node(
                 end_game_state=EndGameStates.FIRST_FORMING_LOOP,
                 is_win=self.game_ai_color == "white",
-                reward_params={"move_counter": self.move_counter},
+                reward_params={"move_counter": self.depth},
             )
             self.game_over = True
             return True
@@ -387,6 +391,10 @@ class Node:
             self.__bigger_group()
         else:
             return False
+
+    def __check_all_hexes_selected(self):
+        """Checks if all hexes on the board have been selected."""
+        return all(hex_info["selected"] for hex_info in self.hexagon_board.values())
 
     def __find_shortest_loop(self, walls):
 
@@ -538,7 +546,7 @@ class Node:
         # print(f"White max group size: {white_max_group}")
         if black_max_group > white_max_group:
             # print("Black wins by larger group!")
-            self.t_value = self.__utility(
+            self.t_value = self.__evaluate_terminal_node(
                 end_game_state=EndGameStates.LARGER_CONNECTED_GROUP,
                 is_win=self.game_ai_color == "black",
                 reward_params={"value": 1},
@@ -546,7 +554,7 @@ class Node:
             self.game_over = True
         elif white_max_group > black_max_group:
             # print("White wins by larger group!")
-            self.t_value = self.__utility(
+            self.t_value = self.__evaluate_terminal_node(
                 end_game_state=EndGameStates.LARGER_CONNECTED_GROUP,
                 is_win=self.game_ai_color == "white",
                 reward_params={"value": 1},
@@ -554,14 +562,25 @@ class Node:
             self.game_over = True
         else:
             # print("White wins!")
-            self.t_value = self.__utility(
+            self.t_value = self.__evaluate_terminal_node(
                 end_game_state=EndGameStates.EQUAL_CONNECTED_GROUP,
                 is_win=self.game_ai_color == "white",
                 reward_params={"value": 0.5},
             )
             self.game_over = True
 
-    def __utility(self, end_game_state, is_win, reward_params=None):
+    def __first_forming_loop_reward(self, reward_params):
+        # Moves needed for the player to form the loop
+        player_move_count = reward_params["move_counter"] / 2
+
+        if player_move_count < 10:
+            return 1, -1
+        elif player_move_count < 20:
+            return 0.5, -0.5
+        else:
+            return 0.3, -0.3
+
+    def __evaluate_terminal_node(self, end_game_state, is_win, reward_params=None):
         """
         Set t-value as a reward when winning and punishment for losing
         """
@@ -634,7 +653,7 @@ class GameAI:
         game_turn = 0
         for (hx, hy), hex_info in self.hexagon_board.items():
             if hex_info.get("selected", True) and (hx, hy) != (0, 0):
-                self.game_turn += 1
+                game_turn += 1
 
         root_node = Node(
             hexagon_board=self.hexagon_board,
@@ -643,24 +662,15 @@ class GameAI:
             game_turn=game_turn,
         )
 
-        # Cache possible move coordinates
-        valid_move_coords = {}
-        for mx, my in self.next_move_options():
-            valid_move_coords[(mx, my)] = True
-
-        self.minimax(root_node, 0, True, valid_move_coords=valid_move_coords)
-
-        while not self.turn_done_event.is_set():
-
-            break
+        self.minimax(root_node, 0, True)
 
         # Decide move
-        best_move, best_value = self.get_best_move(root_node)
+        best_move, best_value = self.__decide_best_move(root_node)
         (pos_x, pos_y, color) = best_move
 
         return (pos_x, pos_y, color)
 
-    def next_move_options(self):
+    def __next_move_options(self):
         CENTER = (0, 0)
 
         move_options = []
@@ -718,16 +728,16 @@ class GameAI:
             node.minimax_value = node.t_value
             return node.t_value
 
-        # Expand moves
+        # Expand possible moves
         valid_move_coords = {}
+        for mx, my in self.__next_move_options():
+            valid_move_coords[(mx, my)] = True
 
+        # Get recommended moves
         heuristics = Heuristic(
             hexagon_board=node.hexagon_board, player_color=node.color_to_move
         )
         recommended_moves = heuristics.recommended_moves()
-
-        for mx, my in self.next_move_options():
-            valid_move_coords[(mx, my)] = True
 
         if is_maximizing:
             max_eval = -math.inf
@@ -739,31 +749,39 @@ class GameAI:
                     if self.turn_done_event.is_set():
                         break
 
-                    hexagon_board_updated = copy.deepcopy(node.hexagon_board)
-                    hexagon_board_updated[(hx, hy)]["selected"] = True
-                    hexagon_board_updated[(hx, hy)]["color"] = color
+                    # hexagon_board_updated = copy.deepcopy(node.hexagon_board)
+                    hexagon_board_updated = node.hexagon_board
+                    node.hexagon_board[(hx, hy)]["selected"] = True
+                    node.hexagon_board[(hx, hy)]["color"] = color
 
                     next_color_to_move = (
-                        "white" if self.color_to_move == "black" else "black"
+                        "white" if node.color_to_move == "black" else "black"
                     )
 
-                    action = (hx, hy, color)  # The operator in the search space
+                    # The operator in the search space
+                    action = (hx, hy, color)
                     heuristic_score = (
                         recommended_moves[action] if action in recommended_moves else 0
                     )
 
                     child_node = Node(
                         last_move=action,
-                        hexagon_board=hexagon_board_updated,
+                        hexagon_board=node.hexagon_board,
                         # parent=self,
-                        game_ai_color=self.game_ai_color,
+                        game_ai_color=self.color,
                         color_to_move=next_color_to_move,
+                        game_turn=node.game_turn + 1,
+                        depth=depth,
                         # heuristic_score=heuristic_score,
                     )
                     node.add_child(child_node)
 
                     eval_score = self.minimax(child_node, depth + 1, False, alpha, beta)
                     max_eval = max(max_eval, eval_score)
+
+                    # Revert the move
+                    hexagon_board_updated[(hx, hy)]["selected"] = False
+                    hexagon_board_updated[(hx, hy)]["color"] = None
 
                     alpha = max(alpha, eval_score)
                     # Alpha-beta pruning
@@ -777,8 +795,8 @@ class GameAI:
                         # self.nodes_pruned += len(remaining_children)
                         break
 
-                    node.minimax_value = max_eval
-                    return max_eval
+                node.minimax_value = max_eval
+                return max_eval
 
         else:  # Minimizing player
             min_eval = math.inf
@@ -790,7 +808,8 @@ class GameAI:
                     if self.turn_done_event.is_set():
                         break
 
-                    hexagon_board_updated = copy.deepcopy(node.hexagon_board)
+                    # hexagon_board_updated = copy.deepcopy(node.hexagon_board)
+                    hexagon_board_updated = node.hexagon_board
                     hexagon_board_updated[(hx, hy)]["selected"] = True
                     hexagon_board_updated[(hx, hy)]["color"] = color
 
@@ -807,14 +826,19 @@ class GameAI:
                         last_move=action,
                         hexagon_board=hexagon_board_updated,
                         # parent=self,
-                        game_ai_color=node.game_ai_color,
+                        game_ai_color=self.color,
                         color_to_move=next_color_to_move,
+                        game_turn=node.game_turn + 1,
                         # heuristic_score=heuristic_score,
                     )
                     node.add_child(child_node)
 
                     eval_score = self.minimax(child_node, depth + 1, True, alpha, beta)
                     min_eval = min(min_eval, eval_score)
+
+                    # Revert the move
+                    hexagon_board_updated[(hx, hy)]["selected"] = False
+                    hexagon_board_updated[(hx, hy)]["color"] = None
 
                     beta = min(beta, eval_score)
                     # Alpha-beta pruning
@@ -831,13 +855,13 @@ class GameAI:
             node.minimax_value = min_eval
             return min_eval
 
-    def get_best_move(self, root_node):
+    def __decide_best_move(self, root_node):
         """Get the best move and its value"""
         if not root_node or not root_node.children:
             return None, 0
 
         best_value = root_node.minimax_value
-        for child_node in enumerate(root_node.children):
+        for child_node in root_node.children:
             if child_node.minimax_value == best_value:
                 return child_node.last_move, child_node.minimax_value
 
