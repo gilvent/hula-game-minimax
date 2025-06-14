@@ -821,8 +821,8 @@ class GameAI:
         # Base case: terminal node
 
         # TODO create heuristics to evaluate node mid game
-        if node.depth == max_depth:
-            #return node.get_heuristic_value()
+        if node.depth == max_depth or self.turn_done_event.is_set():
+            # return node.get_heuristic_value()
             return 0.1
 
         if node.is_terminal():
@@ -832,10 +832,6 @@ class GameAI:
             max_eval = -math.inf
 
             for hx, hy, color in node.possible_moves():
-                if self.turn_done_event.is_set():
-                    # print("[Maximizer] Thinking time is up!")
-                    break
-
                 child_node = node.make_move((hx, hy, color))
                 eval_score = self.minimax(
                     node=child_node,
@@ -863,10 +859,6 @@ class GameAI:
             min_eval = math.inf
 
             for hx, hy, color in node.possible_moves():
-
-                if self.turn_done_event.is_set():
-                    # print("[Minimizer] Thinking time is up!")
-                    break
 
                 child_node = node.make_move((hx, hy, color))
 
