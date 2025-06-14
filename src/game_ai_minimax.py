@@ -544,7 +544,6 @@ class Node:
             self.t_value = self.__evaluate_terminal_node(
                 end_game_state=EndGameStates.LARGER_CONNECTED_GROUP,
                 is_win=self.game_ai_color == "black",
-                reward_params={"value": 1},
             )
             self.game_over = True
         elif white_max_group > black_max_group:
@@ -552,7 +551,6 @@ class Node:
             self.t_value = self.__evaluate_terminal_node(
                 end_game_state=EndGameStates.LARGER_CONNECTED_GROUP,
                 is_win=self.game_ai_color == "white",
-                reward_params={"value": 1},
             )
             self.game_over = True
         else:
@@ -560,7 +558,6 @@ class Node:
             self.t_value = self.__evaluate_terminal_node(
                 end_game_state=EndGameStates.EQUAL_CONNECTED_GROUP,
                 is_win=self.game_ai_color == "white",
-                reward_params={"value": 0.5},
             )
             self.game_over = True
 
@@ -568,12 +565,14 @@ class Node:
         # Moves needed for the player to form the loop
         player_move_count = reward_params["move_counter"] / 2
 
+        if player_move_count < 5:
+            return 10, -10
         if player_move_count < 10:
-            return 1, -1
+            return 7.5, -7.5
         elif player_move_count < 20:
-            return 0.5, -0.5
+            return 5, -5
         else:
-            return 0.3, -0.3
+            return 3, -3
 
     def __evaluate_terminal_node(self, end_game_state, is_win, reward_params=None):
         """
@@ -582,11 +581,11 @@ class Node:
 
         default_rewards = dict(
             [
-                (EndGameStates.SHORTER_LOOP, (0.5, -0.5)),
-                (EndGameStates.EQUAL_LOOP_LESS_NEUTRAL, (0.25, -0.25)),
-                (EndGameStates.EQUAL_LOOP_EQUAL_NEUTRAL, (0.25, -0.25)),
-                (EndGameStates.LARGER_CONNECTED_GROUP, (1, -1)),
-                (EndGameStates.EQUAL_CONNECTED_GROUP, (0.8, -0.8)),
+                (EndGameStates.SHORTER_LOOP, (5, -5)),
+                (EndGameStates.EQUAL_LOOP_LESS_NEUTRAL, (2.5, -2.5)),
+                (EndGameStates.EQUAL_LOOP_EQUAL_NEUTRAL, (2.5, -2.5)),
+                (EndGameStates.LARGER_CONNECTED_GROUP, (10, -10)),
+                (EndGameStates.EQUAL_CONNECTED_GROUP, (8, -8)),
             ]
         )
 
