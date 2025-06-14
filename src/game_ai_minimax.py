@@ -30,7 +30,7 @@ class EndGameStates:
     EQUAL_CONNECTED_GROUP = "EQUAL_CONNECTED_GROUP"
 
 
-class Heuristic:
+class HeuristicEvaluation:
     def __init__(self, hexagon_board, player_color):
         self.hexagon_board = hexagon_board
         self.player_color = player_color
@@ -39,40 +39,6 @@ class Heuristic:
         for (hx, hy), hex_info in hexagon_board.items():
             if hex_info.get("selected", True) and (hx, hy) != (0, 0):
                 self.game_turn += 1
-
-    def recommended_moves(self):
-        # Force center control
-        center_moves = self.__center_control_move_scores()
-        if len(center_moves) != 0:
-            return center_moves
-
-        recommended = {}
-
-        # Scores for loop path moves
-        loop_path_scores = self.__loop_path_move_scores()
-        for action in loop_path_scores:
-            recommended[action] = loop_path_scores[action]
-
-        # Focus on spreading to corners as the game goes
-        corner_path_scores = self.__control_corners_scores()
-        for action in corner_path_scores:
-            recommended[action] = (
-                recommended[action] + corner_path_scores[action]
-                if action in recommended
-                else corner_path_scores[action]
-            )
-
-        return recommended
-
-    def __center_control_move_scores(self):
-        CENTER_MOVES = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, 1), (1, -1)]
-        scores = {}
-
-        for hx, hy in CENTER_MOVES:
-            if not self.hexagon_board[(hx, hy)]["selected"]:
-                scores[(hx, hy, self.player_color)] = 10
-
-        return scores
 
     def __search_loop_bases(self, player_color):
         # Loop base consists of center and opponent's color connected to center.
@@ -155,32 +121,7 @@ class Heuristic:
 
         return has_loop, shortest_loop_path, n_moves_to_form_loop
 
-    def __loop_path_move_scores(self):
-        has_loop, shortest_loop_path, n_moves_to_loop = self.__possible_loop(
-            player_color=self.player_color
-        )
-
-        if not has_loop or n_moves_to_loop > 15:
-            return {}
-
-        recommended_moves = {}
-        score = 0
-
-        # Dominant score if very close to forming loop
-        if n_moves_to_loop <= 3:
-            score = 10
-        if n_moves_to_loop <= 5:
-            score = 1
-        else:
-            score = 0.5
-
-        for hx, hy in shortest_loop_path:
-            recommended_moves[(hx, hy, self.player_color)] = score
-
-        return recommended_moves
-
-    def __control_corners_scores(self):
-        # TODO shift the corners if already controlled by opponent
+    def __path_to_corners(self):
         CORNERS = [(5, -5), (-5, 5), (0, 5), (0, -5), (5, 0), (-5, 0)]
         opponent_color = "white" if self.player_color == "black" else "black"
 
@@ -224,35 +165,55 @@ class Heuristic:
             path = bfs((0, 0), corner)
             paths_to_corners[corner] = path
 
-        # Scoring rule
-        score = 0
-        if self.game_turn < 10:
-            score = 0.25
-        elif self.game_turn < 70:
-            score = 0.5
+        return paths_to_corners
 
-        # Collecting all the moves
-        scores = {}
-        for corner, paths in paths_to_corners.items():
-            if paths == None:
+    def evaluate_board(self):
+        # Score by controlling center
+        score = 0
+        CENTER_MOVES = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, 1), (1, -1)]
+
+        for hx, hy in CENTER_MOVES:
+            if not self.hexagon_board[(hx, hy)]["selected"]:
+                score += 0.25
+                continue
+            if self.hexagon_board[(hx, hy)]["color"] == self.player_color:
+                score += 0.5
                 continue
 
-            for hx, hy in paths:
-                if (hx, hy) == (0, 0):
-                    continue
+            score -= 0.5
 
-                action = (hx, hy, self.player_color)
-                if action in scores:
-                    continue
+        # Score by loop possibility
+        has_loop, shortest_loop_path, n_moves_to_loop = self.__possible_loop(
+            player_color=self.player_color
+        )
 
-                scores[action] = score
+        if has_loop:
+            if n_moves_to_loop < 3:
+                return math.inf
+            elif n_moves_to_loop <= 5:
+                score += 1
+            elif n_moves_to_loop <= 10:
+                score = 0.5
+            else:
+                score = 0.25
 
-        return scores
+        # Score by controlling corners
+        if self.game_turn < 10:
+            path_to_corner_score = 2.5
+        elif self.game_turn < 70:
+            path_to_corner_score = 5
+
+        for corner, paths in self.__path_to_corners().items():
+            # The less required path, the better
+            if paths != None:
+                path_to_corner_score -= len(paths) * 0.1
+
+        score += path_to_corner_score
+
+        return score
 
 
 class Node:
-    """Represents a node in the game tree"""
-
     def __init__(
         self,
         color_to_move=None,
@@ -273,16 +234,10 @@ class Node:
         self.depth = depth
 
     def add_child(self, child):
-        """Add a child node"""
         self.children.append(child)
 
     def is_terminal(self):
-        """Check if this is a terminal node"""
-        # TODO implement cutoff test and heuristic value
-        cutoff = False
-        if self.__decide_winner() or cutoff:
-            return True
-        return False
+        return self.__decide_winner()
 
     def __log_end_game_state(self, message):
         print(f"[Minimax] End game at depth {self.depth}:", message)
@@ -563,13 +518,13 @@ class Node:
 
     def __first_forming_loop_reward(self, reward_params):
         # Moves needed for the player to form the loop
-        player_move_count = reward_params["move_counter"] / 2
+        n_move_to_loop = reward_params["move_counter"] / 2
 
-        if player_move_count < 5:
-            return 10, -10
-        if player_move_count < 10:
+        if n_move_to_loop < 3:
+            return math.inf, -math.inf
+        elif n_move_to_loop < 5:
             return 7.5, -7.5
-        elif player_move_count < 20:
+        elif n_move_to_loop < 10:
             return 5, -5
         else:
             return 3, -3
@@ -608,32 +563,12 @@ class Node:
         for mx, my in self.__possible_move_coordinates():
             valid_move_coords[(mx, my)] = True
 
-        # Get recommended moves
-        heuristics = Heuristic(
-            hexagon_board=self.hexagon_board, player_color=self.color_to_move
-        )
-        recommended_move_scores = heuristics.recommended_moves()
-
-        # Shuffle the move order by recommended weights (for DFS exploration)
         possible_moves = []
         for hx, hy in valid_move_coords.keys():
             for color in [self.color_to_move, "gray"]:
                 possible_moves.append((hx, hy, color))
 
-        weights = [
-            recommended_move_scores[move] + 1 if move in recommended_move_scores else 1
-            for move in possible_moves
-        ]
-
-        # Sort possible_moves by corresponding weights in descending order
-        sorted_possible_moves = [
-            move
-            for move, weight in sorted(
-                zip(possible_moves, weights), key=lambda x: x[1], reverse=True
-            )
-        ]
-
-        return sorted_possible_moves
+        return possible_moves
 
     def __possible_move_coordinates(self):
         CENTER = (0, 0)
@@ -728,21 +663,11 @@ class GameAI:
         return start_tick
 
     def run_minimax(self, max_depth):
-        """
-        Perform iterative deepening search
-
-        Args:
-            max_depth: Maximum depth to search
-
-        Returns:
-            Tuple of (best_move, best_value)
-        """
         self.__start_turn_timer()
         best_move = -1
         best_value = -math.inf
 
-        print(f"Starting iterative deepening search (max_depth={max_depth})...")
-        print("-" * 50)
+        print(f"[Minimax] Starting iterative deepening minimax (max_depth={max_depth})...")
 
         root_node = Node(
             hexagon_board=self.hexagon_board,
@@ -754,14 +679,16 @@ class GameAI:
         for md in range(1, max_depth + 1):
             move, value = self.__root_minimax(root_node=root_node, max_depth=md)
 
-            print(f"Depth {md}: Move={move}, Value={value}")
+            print(f"[Minimax] Max Depth {md}: Move={move}, Value={value}")
             best_move = move
             best_value = value
 
-        print("-" * 50)
-        print(f"[Minimax]: Selected Move:{best_move}, Value:{best_value}")
+            if best_value == math.inf:
+                return best_move
 
-        # Always return best in deepest search
+        print(f"[Minimax] Selected Move:{best_move}, Value:{best_value}")
+
+        # TODO return best value among completed search
         return best_move
 
     def __root_minimax(self, root_node, max_depth):
@@ -804,25 +731,13 @@ class GameAI:
         alpha: int = -math.inf,
         beta: int = math.inf,
     ) -> int:
-        """
-        Minimax algorithm with optional alpha-beta pruning
-
-        Args:
-            node: Current node in the tree
-            is_maximizing: True if current player is maximizing
-            max_depth: Depth limit for iterative deepening
-            alpha: Best value that maximizer can guarantee
-            beta: Best value that minimizer can guarantee
-
-        Returns:
-            The minimax value of the node
-        """
-        # Base case: terminal node
-
-        # TODO create heuristics to evaluate node mid game
+        # Use heuristic value when reaching depth limit and time runs out
         if node.depth == max_depth or self.turn_done_event.is_set():
-            # return node.get_heuristic_value()
-            return 0.1
+            heuristic = HeuristicEvaluation(
+                hexagon_board=self.hexagon_board, player_color=node.color_to_move
+            )
+            score = heuristic.evaluate_board()
+            return score if is_maximizing else -score
 
         if node.is_terminal():
             return node.t_value
@@ -854,7 +769,7 @@ class GameAI:
             node.best_value = max_eval
             return max_eval
 
-        else:  # Minimizing player
+        else:
             min_eval = math.inf
 
             for hx, hy, color in node.possible_moves():
