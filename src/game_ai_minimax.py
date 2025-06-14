@@ -255,16 +255,15 @@ class Node:
 
     def __init__(
         self,
-        value=None,
         color_to_move=None,
         game_ai_color=None,
         hexagon_board=None,
         last_move=None,
         depth=0,
     ):
-        self.t_value = value  # Terminal value for leaf nodes
+        self.t_value = None  # Terminal value for leaf nodes
         self.children = []
-        self.minimax_value = None
+        self.best_value = None
         self.alpha = None
         self.beta = None
         self.color_to_move = color_to_move
@@ -604,6 +603,93 @@ class Node:
         )
         return win_reward if is_win else lose_punishment
 
+    def possible_moves(self):
+        # Expand possible moves
+        valid_move_coords = {}
+        for mx, my in self.__possible_move_coordinates():
+            valid_move_coords[(mx, my)] = True
+
+        # Get recommended moves
+        heuristics = Heuristic(
+            hexagon_board=self.hexagon_board, player_color=self.color_to_move
+        )
+        recommended_move_scores = heuristics.recommended_moves()
+
+        # Shuffle the move order by recommended weights (for DFS exploration)
+        possible_moves = []
+        for hx, hy in valid_move_coords.keys():
+            for color in [self.color_to_move, "gray"]:
+                possible_moves.append((hx, hy, color))
+
+        weights = [
+            recommended_move_scores[move] + 1 if move in recommended_move_scores else 1
+            for move in possible_moves
+        ]
+
+        # Sort possible_moves by corresponding weights in descending order
+        sorted_possible_moves = [
+            move
+            for move, weight in sorted(
+                zip(possible_moves, weights), key=lambda x: x[1], reverse=True
+            )
+        ]
+
+        return sorted_possible_moves
+
+    def __possible_move_coordinates(self):
+        CENTER = (0, 0)
+
+        move_options = []
+        visited = set()
+        visited.add(CENTER)
+
+        expandable_coordinates = []
+
+        for (hx, hy), hex_info in self.hexagon_board.items():
+            if hex_info.get("selected", True):
+                expandable_coordinates.append((hx, hy))
+
+        # Use neighbors of expandable coordinates as possible next move
+        for hx, hy in expandable_coordinates:
+            for neighbor in neighbor_hexes(hx=hx, hy=hy):
+
+                if neighbor in visited:
+                    continue
+
+                if neighbor not in self.hexagon_board:
+                    continue
+
+                if self.hexagon_board[neighbor]["selected"]:
+                    continue
+
+                visited.add(neighbor)
+                move_options.append(neighbor)
+
+        return move_options
+
+    def make_move(self, action):
+        (hx, hy, color) = action
+        self.hexagon_board[(hx, hy)]["selected"] = True
+        self.hexagon_board[(hx, hy)]["color"] = color
+
+        next_color_to_move = "white" if self.color_to_move == "black" else "black"
+
+        child_node = Node(
+            last_move=action,
+            hexagon_board=self.hexagon_board,
+            game_ai_color=self.game_ai_color,
+            color_to_move=next_color_to_move,
+            depth=self.depth + 1,
+        )
+        # self.add_child(child_node)
+
+        return child_node
+
+    def revert_last_move(self):
+        hx, hy, color = self.last_move
+        self.hexagon_board[(hx, hy)]["selected"] = False
+        self.hexagon_board[(hx, hy)]["color"] = None
+
 
 class GameAI:
     def __init__(self, hexagon_board, color):
@@ -642,64 +728,79 @@ class GameAI:
         ).start()
         return start_tick
 
-    def run_minimax(self):
-        self.__start_turn_timer()
+    def run_minimax(self, max_depth):
+        """
+        Perform iterative deepening search
 
-        # Initialize turn and valid_moves
-        game_turn = 0
-        for (hx, hy), hex_info in self.hexagon_board.items():
-            if hex_info.get("selected", True) and (hx, hy) != (0, 0):
-                game_turn += 1
+        Args:
+            max_depth: Maximum depth to search
+
+        Returns:
+            Tuple of (best_move, best_value)
+        """
+        self.__start_turn_timer()
+        best_move = -1
+        best_value = -math.inf
+
+        print(f"Starting iterative deepening search (max_depth={max_depth})...")
+        print("-" * 50)
 
         root_node = Node(
             hexagon_board=self.hexagon_board,
             color_to_move=self.color,
             game_ai_color=self.color,
+            depth=0,
         )
 
-        self.minimax(root_node, 0, True)
+        for md in range(1, max_depth + 1):
+            move, value = self.__root_minimax(root_node=root_node, max_depth=md)
 
-        # Decide move
-        best_move, best_value = self.__decide_best_move(root_node)
-        (pos_x, pos_y, color) = best_move
+            print(f"Depth {md}: Move={move}, Value={value}")
+            best_move = move
+            best_value = value
 
-        return (pos_x, pos_y, color)
+        print("-" * 50)
+        print(f"[Minimax]: Selected Move:{best_move}, Value:{best_value}")
 
-    def __next_move_options(self):
-        CENTER = (0, 0)
+        # Always return best in deepest search
+        return best_move
 
-        move_options = []
-        visited = set()
-        visited.add(CENTER)
+    def __root_minimax(self, root_node, max_depth):
+        best_value = -math.inf
+        alpha = -math.inf
+        beta = math.inf
+        best_move = None
 
-        expandable_coordinates = []
+        for move in root_node.possible_moves():
+            hx, hy, color = move
+            child_node = root_node.make_move((hx, hy, color))
+            value = self.minimax(
+                node=child_node,
+                max_depth=max_depth,
+                is_maximizing=False,
+                alpha=alpha,
+                beta=beta,
+            )
 
-        for (hx, hy), hex_info in self.hexagon_board.items():
-            if hex_info.get("selected", True):
-                expandable_coordinates.append((hx, hy))
+            # Revert last move because we use
+            # a single instance of hexagon board for all child nodes
+            child_node.revert_last_move()
 
-        # Use neighbors of expandable coordinates as possible next move
-        for hx, hy in expandable_coordinates:
-            for neighbor in neighbor_hexes(hx=hx, hy=hy):
+            if value > best_value:
+                best_value = value
+                best_move = move
 
-                if neighbor in visited:
-                    continue
+            alpha = max(alpha, value)
 
-                if neighbor not in self.hexagon_board:
-                    continue
-
-                if self.hexagon_board[neighbor]["selected"]:
-                    continue
-
-                visited.add(neighbor)
-                move_options.append(neighbor)
-
-        return move_options
+        # Get best move
+        pos_x, pos_y, color = best_move
+        root_node.best_value = best_value
+        return (pos_x, pos_y, color), best_value
 
     def minimax(
         self,
         node: Node,
-        depth: int,
+        max_depth: int,
         is_maximizing: bool,
         alpha: int = -math.inf,
         beta: int = math.inf,
@@ -709,8 +810,8 @@ class GameAI:
 
         Args:
             node: Current node in the tree
-            depth: Current depth in the tree
             is_maximizing: True if current player is maximizing
+            max_depth: Depth limit for iterative deepening
             alpha: Best value that maximizer can guarantee
             beta: Best value that minimizer can guarantee
 
@@ -718,159 +819,77 @@ class GameAI:
             The minimax value of the node
         """
         # Base case: terminal node
+
+        # TODO create heuristics to evaluate node mid game
+        if node.depth == max_depth:
+            #return node.get_heuristic_value()
+            return 0.1
+
         if node.is_terminal():
-            node.minimax_value = node.t_value
             return node.t_value
-
-        # Expand possible moves
-        valid_move_coords = {}
-        for mx, my in self.__next_move_options():
-            valid_move_coords[(mx, my)] = True
-
-        # Get recommended moves
-        heuristics = Heuristic(
-            hexagon_board=node.hexagon_board, player_color=node.color_to_move
-        )
-        recommended_move_scores = heuristics.recommended_moves()
-
-        # Shuffle the move order by recommended weights (for DFS exploration)
-        possible_moves = []
-        for hx, hy in valid_move_coords.keys():
-            for color in [node.color_to_move, "gray"]:
-                possible_moves.append((hx, hy, color))
-
-        weights = [
-            recommended_move_scores[move] + 1 if move in recommended_move_scores else 1
-            for move in possible_moves
-        ]
-
-        # Sort possible_moves by corresponding weights in descending order
-        sorted_possible_moves = [
-            move
-            for move, weight in sorted(
-                zip(possible_moves, weights), key=lambda x: x[1], reverse=True
-            )
-        ]
-
-
 
         if is_maximizing:
             max_eval = -math.inf
 
-            for hx, hy, color in sorted_possible_moves:
+            for hx, hy, color in node.possible_moves():
                 if self.turn_done_event.is_set():
                     # print("[Maximizer] Thinking time is up!")
                     break
 
-                node.hexagon_board[(hx, hy)]["selected"] = True
-                node.hexagon_board[(hx, hy)]["color"] = color
-
-                next_color_to_move = (
-                    "white" if node.color_to_move == "black" else "black"
-                )
-
-                # The operator in the search space
-                action = (hx, hy, color)
-                # print(f"[Maximizer] Node in Depth {depth}:", action)
-
-                child_node = Node(
-                    last_move=action,
-                    hexagon_board=node.hexagon_board,
-                    game_ai_color=self.color,
-                    color_to_move=next_color_to_move,
-                    depth=depth + 1,
-                )
-                node.add_child(child_node)
-
+                child_node = node.make_move((hx, hy, color))
                 eval_score = self.minimax(
                     node=child_node,
-                    depth=depth + 1,
+                    max_depth=max_depth,
                     is_maximizing=False,
                     alpha=alpha,
                     beta=beta,
                 )
                 max_eval = max(max_eval, eval_score)
-
-                # Revert the move
-                node.hexagon_board[(hx, hy)]["selected"] = False
-                node.hexagon_board[(hx, hy)]["color"] = None
-
                 alpha = max(alpha, eval_score)
+
+                # Revert last move because we use
+                # a single instance of hexagon board for all child nodes
+                child_node.revert_last_move()
 
                 # Alpha-beta pruning
                 if beta <= alpha:
                     # print("[Maximizer] Pruned")
                     break
 
-            node.minimax_value = max_eval
+            node.best_value = max_eval
             return max_eval
 
         else:  # Minimizing player
             min_eval = math.inf
 
-            for hx, hy, color in sorted_possible_moves:
+            for hx, hy, color in node.possible_moves():
 
                 if self.turn_done_event.is_set():
                     # print("[Minimizer] Thinking time is up!")
                     break
 
-                node.hexagon_board[(hx, hy)]["selected"] = True
-                node.hexagon_board[(hx, hy)]["color"] = color
-
-                next_color_to_move = (
-                    "white" if node.color_to_move == "black" else "black"
-                )
-
-                action = (hx, hy, color)  # The operator in the search space
-                # print(f"[Minimizer] Node in Depth {depth}:", action)
-
-                child_node = Node(
-                    last_move=action,
-                    hexagon_board=node.hexagon_board,
-                    game_ai_color=self.color,
-                    color_to_move=next_color_to_move,
-                    depth=depth + 1,
-                )
-                node.add_child(child_node)
+                child_node = node.make_move((hx, hy, color))
 
                 eval_score = self.minimax(
                     node=child_node,
-                    depth=depth + 1,
+                    max_depth=max_depth,
                     is_maximizing=True,
                     alpha=alpha,
                     beta=beta,
                 )
                 min_eval = min(min_eval, eval_score)
-
-                # Revert the move
-                node.hexagon_board[(hx, hy)]["selected"] = False
-                node.hexagon_board[(hx, hy)]["color"] = None
-
                 beta = min(beta, eval_score)
+
+                # Revert last move
+                child_node.revert_last_move()
 
                 # Alpha-beta pruning
                 if beta <= alpha:
                     # print(f"[Minimizer] Prune:", action)
                     break
 
-            node.minimax_value = min_eval
+            node.best_value = min_eval
             return min_eval
-
-    def __decide_best_move(self, root_node):
-        """Get the best move and its value"""
-        if not root_node or not root_node.children:
-            return None, 0
-
-        best_value = root_node.minimax_value
-        print(
-            "[Minimax Decision]:",
-            root_node.children,
-        )
-        for child_node in root_node.children:
-            if child_node.minimax_value == best_value:
-                return child_node.last_move, child_node.minimax_value
-
-        return None, 0
 
 
 def make_move(
@@ -878,4 +897,4 @@ def make_move(
     color,
 ):
     ai = GameAI(hexagon_board=hexagon_board, color=color)
-    return ai.run_minimax()
+    return ai.run_minimax(max_depth=30)
