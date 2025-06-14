@@ -677,9 +677,13 @@ class GameAI:
         )
 
         for md in range(1, max_depth + 1):
-            move, value = self.__root_minimax(root_node=root_node, max_depth=md)
+            move, value, time_cutoff = self.__root_minimax(root_node=root_node, max_depth=md)
 
             print(f"[Minimax] Max Depth {md}: Move={move}, Value={value}")
+            
+            if time_cutoff:
+                break
+            
             best_move = move
             best_value = value
 
@@ -688,7 +692,7 @@ class GameAI:
 
         print(f"[Minimax] Selected Move:{best_move}, Value:{best_value}")
 
-        # TODO return best value among completed search
+
         return best_move
 
     def __root_minimax(self, root_node, max_depth):
@@ -700,7 +704,7 @@ class GameAI:
         for move in root_node.possible_moves():
             hx, hy, color = move
             child_node = root_node.make_move((hx, hy, color))
-            value = self.minimax(
+            value, time_cutoff = self.minimax(
                 node=child_node,
                 max_depth=max_depth,
                 is_maximizing=False,
@@ -715,13 +719,16 @@ class GameAI:
             if value > best_value:
                 best_value = value
                 best_move = move
-
+            
             alpha = max(alpha, value)
+
+            if time_cutoff:
+                break
 
         # Get best move
         pos_x, pos_y, color = best_move
         root_node.best_value = best_value
-        return (pos_x, pos_y, color), best_value
+        return (pos_x, pos_y, color), best_value, time_cutoff
 
     def minimax(
         self,
@@ -732,22 +739,25 @@ class GameAI:
         beta: int = math.inf,
     ) -> int:
         # Use heuristic value when reaching depth limit and time runs out
-        if node.depth == max_depth or self.turn_done_event.is_set():
+        time_cutoff = self.turn_done_event.is_set()
+
+        if node.depth == max_depth or time_cutoff:
             heuristic = HeuristicEvaluation(
                 hexagon_board=self.hexagon_board, player_color=node.color_to_move
             )
             score = heuristic.evaluate_board()
-            return score if is_maximizing else -score
+            val = score if is_maximizing else -score
+            return val, time_cutoff
 
         if node.is_terminal():
-            return node.t_value
+            return node.t_value, time_cutoff
 
         if is_maximizing:
             max_eval = -math.inf
 
             for hx, hy, color in node.possible_moves():
                 child_node = node.make_move((hx, hy, color))
-                eval_score = self.minimax(
+                eval_score, time_cutoff = self.minimax(
                     node=child_node,
                     max_depth=max_depth,
                     is_maximizing=False,
@@ -767,7 +777,7 @@ class GameAI:
                     break
 
             node.best_value = max_eval
-            return max_eval
+            return max_eval, time_cutoff
 
         else:
             min_eval = math.inf
@@ -776,7 +786,7 @@ class GameAI:
 
                 child_node = node.make_move((hx, hy, color))
 
-                eval_score = self.minimax(
+                eval_score, time_cutoff = self.minimax(
                     node=child_node,
                     max_depth=max_depth,
                     is_maximizing=True,
@@ -795,7 +805,7 @@ class GameAI:
                     break
 
             node.best_value = min_eval
-            return min_eval
+            return min_eval, time_cutoff
 
 
 def make_move(

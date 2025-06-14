@@ -6,7 +6,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/src/hula_version2.py",
-            "args": ["human", "AI"]
+            "args": ["random", "AI"]
         }
     ]
 }
